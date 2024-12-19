@@ -23,6 +23,5 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Node 
-node_modules
-coverage
+*.gguf
+*.wav
