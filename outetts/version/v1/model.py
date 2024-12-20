@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
 import torch
-from loguru import logger
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 try:
@@ -8,13 +7,6 @@ try:
     _GGUF_AVAILABLE = True
 except ImportError:
     _GGUF_AVAILABLE = False
-
-try:
-    from exllamav2 import ExLlamaV2, ExLlamaV2Config, ExLlamaV2Cache, ExLlamaV2Tokenizer
-    from exllamav2.generator import ExLlamaV2DynamicGenerator, ExLlamaV2DynamicJob, ExLlamaV2Sampler
-    _EXL2_AVAILABLE = True
-except ImportError:
-    _EXL2_AVAILABLE = False
 
 @dataclass
 class GenerationConfig:

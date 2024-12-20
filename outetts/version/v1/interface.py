@@ -1,9 +1,7 @@
 from ...wav_tokenizer.audio_codec import AudioCodec
 from .prompt_processor import PromptProcessor
-from .model import HFModel, GGUFModel, EXL2Model, GenerationConfig
-from ...whisper import transcribe
+from .model import GGUFModel, GenerationConfig
 import torch
-from .alignment import CTCForcedAlignment
 import torchaudio
 from dataclasses import dataclass, field
 from loguru import logger
@@ -73,10 +71,6 @@ class GGUFModelConfig(HFModelConfig):
     n_gpu_layers: int = 0
 
 @dataclass
-class EXL2ModelConfig(HFModelConfig):
-    pass
-
-@dataclass
 class ModelOutput:
     audio: torch.Tensor
     sr: int
@@ -141,61 +135,6 @@ class InterfaceHF:
         return self.audio_codec.decode(
             torch.tensor([[output]], dtype=torch.int64).to(self.audio_codec.device)
         )
-
-    def create_speaker(
-            self,
-            audio_path: str,
-            transcript: str = None,
-            whisper_model: str = "turbo",
-            whisper_device = None
-        ):
-
-        if transcript is None:
-            logger.info("Transcription not provided, transcribing audio with whisper.")
-            transcript = transcribe.transcribe_once(
-                audio_path=audio_path,
-                model=whisper_model,
-                device=whisper_device
-            )
-
-        if not transcript:
-            raise ValueError("Transcript text is empty")
-
-        ctc = CTCForcedAlignment(self.languages, self._device)
-        words = ctc.align(audio_path, transcript, self.language)
-        ctc.free()
-
-        full_codes = self.audio_codec.encode(
-            self.audio_codec.convert_audio_tensor(
-                audio=torch.cat([i["audio"] for i in words], dim=1),
-                sr=ctc.sample_rate
-            ).to(self.audio_codec.device)
-        ).tolist()
-
-        data = []
-        start = 0
-        for i in words:
-            end = int(round((i["x1"] / ctc.sample_rate) * 75))
-            word_tokens = full_codes[0][0][start:end]
-            start = end
-            if not word_tokens:
-                word_tokens = [1]
-
-            data.append({
-                "word": i["word"],
-                "duration": round(len(word_tokens) / 75, 2),
-                "codes": word_tokens
-            })
-
-        return {
-            "text": transcript,
-            "words": data,
-            "language": self.language
-        }
-
-    def save_speaker(self, speaker: dict, path: str):
-        with open(path, "w") as f:
-            json.dump(speaker, f, indent=2)
 
     def load_speaker(self, path: str):
         with open(path, "r") as f:
@@ -474,66 +413,6 @@ class InterfaceGGUF(InterfaceHF):
                 repetition_penalty=repetition_penalty,
                 additional_gen_config=additional_gen_config,
             )
-        )
-        audio = self.get_audio(output)
-        if self.verbose:
-            logger.info("Audio generation completed")
-
-        return ModelOutput(audio, self.audio_codec.sr)
-
-class InterfaceEXL2(InterfaceHF):
-    def __init__(
-        self,
-        config: EXL2ModelConfig
-    ) -> None:
-        self.device = torch.device(
-            config.device if config.device is not None
-            else "cuda" if torch.cuda.is_available()
-            else "cpu"
-        )
-        self.config = config
-        self._device = config.device
-        self.languages = config.languages
-        self.language = config.language
-        self.verbose = config.verbose
-
-        self.audio_codec = AudioCodec(self.device, config.wavtokenizer_model_path)
-        self.prompt_processor = PromptProcessor(config.tokenizer_path, self.languages)
-        self.model = EXL2Model(
-            model_path=config.model_path,
-            max_seq_length=config.max_seq_length,
-            additional_model_config=config.additional_model_config,
-        )
-
-    def prepare_prompt(self, text: str, speaker: dict = None):
-        return self.prompt_processor.get_completion_prompt(text, self.language, speaker)
-
-    def generate(
-            self,
-            text: str,
-            speaker: dict = None,
-            temperature: float = 0.1,
-            repetition_penalty: float = 1.1,
-            max_length = 4096,
-            additional_gen_config = {},
-            additional_dynamic_generator_config = {},
-        ) -> ModelOutput:
-        input_ids = self.prepare_prompt(text, speaker)
-        if self.verbose:
-            logger.info(f"Input tokens: {len(input_ids)}")
-            logger.info("Generating audio...")
-
-        self.check_generation_max_length(max_length)
-
-        output = self.model.generate(
-            input_ids=input_ids,
-            config=GenerationConfig(
-                temperature=temperature,
-                repetition_penalty=repetition_penalty,
-                max_length=max_length,
-                additional_gen_config=additional_gen_config,
-            ),
-            additional_dynamic_generator_config=additional_dynamic_generator_config
         )
         audio = self.get_audio(output)
         if self.verbose:

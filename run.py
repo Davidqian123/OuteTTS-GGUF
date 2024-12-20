@@ -17,7 +17,7 @@ interface = outetts.InterfaceGGUF(model_version="0.2", cfg=model_config)
 time_start = time.time()
 # Generate speech
 output = interface.generate(
-    text="Nexa AI is a Cupertino-based company founded in April 2023, specializing in the research and development of multimodal models and developer tools for on-device AI. Founded by Alex (Stanford PhD) and Zack (Ex-Googler & Stanford MS), the company is best known for its Octopus-series models, which offer capabilities comparable to large-scale language models, including function-calling, multimodality, and action planning, while maintaining efficiency for edge device deployment.",
+    text="Nexa AI is a Cupertino-based company founded in April 2023.",
     temperature=0.1,
     repetition_penalty=1.1,
     max_length=4096,
