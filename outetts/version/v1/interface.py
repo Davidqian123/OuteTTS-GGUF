@@ -54,7 +54,7 @@ _DEFAULT_SPEAKERS = {
 }
 
 @dataclass
-class HFModelConfig:
+class GGUFModelConfig:
     model_path: str = "OuteAI/OuteTTS-0.2-500M"
     language: str = "en"
     tokenizer_path: str = None
@@ -65,9 +65,6 @@ class HFModelConfig:
     additional_model_config: dict = field(default_factory=dict)
     wavtokenizer_model_path: str = None
     max_seq_length: int = 4096
-
-@dataclass
-class GGUFModelConfig(HFModelConfig):
     n_gpu_layers: int = 0
 
 @dataclass
@@ -98,11 +95,8 @@ class ModelOutput:
         except Exception as e:
             logger.error(e)
 
-class InterfaceHF:
-    def __init__(
-        self,
-        config: HFModelConfig
-    ) -> None:
+class InterfaceGGUF:
+    def __init__(self, config: GGUFModelConfig) -> None:
         self.device = torch.device(
             config.device if config.device is not None
             else "cuda" if torch.cuda.is_available()
@@ -116,15 +110,17 @@ class InterfaceHF:
 
         self.audio_codec = AudioCodec(self.device, config.wavtokenizer_model_path)
         self.prompt_processor = PromptProcessor(config.tokenizer_path, self.languages)
-        self.model = HFModel(config.model_path, self.device, config.dtype, config.additional_model_config)
+        self.model = GGUFModel(
+            model_path=config.model_path,
+            n_gpu_layers=config.n_gpu_layers,
+            max_seq_length=config.max_seq_length,
+            additional_model_config=config.additional_model_config
+        )
 
     def prepare_prompt(self, text: str, speaker: dict = None):
         prompt = self.prompt_processor.get_completion_prompt(text, self.language, speaker)
-        return self.prompt_processor.tokenizer.encode(
-            prompt,
-            add_special_tokens=False,
-            return_tensors="pt"
-        ).to(self.model.device)
+        # Return a list of token IDs for GGUFModel
+        return self.prompt_processor.tokenizer.encode(prompt, add_special_tokens=False)
 
     def get_audio(self, tokens):
         output = self.prompt_processor.extract_audio_from_tokens(tokens)
@@ -185,20 +181,22 @@ class InterfaceHF:
         if max_length is None:
             raise ValueError("max_length must be specified.")
         if max_length > self.config.max_seq_length:
-            raise ValueError(f"Requested max_length ({max_length}) exceeds the current max_seq_length ({self.config.max_seq_length}).")
+            raise ValueError(
+                f"Requested max_length ({max_length}) exceeds the current max_seq_length ({self.config.max_seq_length})."
+            )
 
     def generate(
-            self,
-            text: str,
-            speaker: dict = None,
-            temperature: float = 0.1,
-            repetition_penalty: float = 1.1,
-            max_length: int = 4096,
-            additional_gen_config={},
-        ) -> ModelOutput:
+        self,
+        text: str,
+        speaker: dict = None,
+        temperature: float = 0.1,
+        repetition_penalty: float = 1.1,
+        max_length = 4096,
+        additional_gen_config = {}
+    ) -> ModelOutput:
         input_ids = self.prepare_prompt(text, speaker)
         if self.verbose:
-            logger.info(f"Input tokens: {input_ids.size()[-1]}")
+            logger.info(f"Input tokens: {len(input_ids)}")
             logger.info("Generating audio...")
 
         self.check_generation_max_length(max_length)
@@ -207,24 +205,16 @@ class InterfaceHF:
             input_ids=input_ids,
             config=GenerationConfig(
                 temperature=temperature,
-                repetition_penalty=repetition_penalty,
                 max_length=max_length,
+                repetition_penalty=repetition_penalty,
                 additional_gen_config=additional_gen_config,
             )
         )
-        audio = self.get_audio(output[input_ids.size()[-1]:])
+        audio = self.get_audio(output)
         if self.verbose:
             logger.info("Audio generation completed")
 
         return ModelOutput(audio, self.audio_codec.sr)
-
-    # ------------------------------------------------ #
-    # Audio Streaming Implementation
-    # In development
-    # Issues:
-    # - Audio popping occurs when starting new chunk
-    # - Needs smoother chunk transitions
-    # ------------------------------------------------ #
 
     def _create_audio_chunk(self, tokens: list[int], idx: int):
         audio = self.get_audio(tokens)
@@ -270,18 +260,12 @@ class InterfaceHF:
             ),
             "stream": True
         }
-        # if additional_dynamic_generator_config:
-            # gen_config["additional_dynamic_generator_config"] = additional_dynamic_generator_config
 
         for token in self.model.generate(**gen_config):
-
             audio_buffer.append(token)
-
             if not stream_segments:
-
                 if token == code_end_token:
                     chunks += 1
-
                 if chunks == chunk_size:
                     output, start_index = self._create_audio_chunk(audio_buffer, start_index)
                     chunks = 0
@@ -296,23 +280,16 @@ class InterfaceHF:
         while True:
             chunk = self.audio_queue.get()
             if chunk is None:
-                # No more audio chunks to process
                 break
             chunk.play()
             self.audio_queue.task_done()
 
     def split_text(self, text, delimiters=None):
         if delimiters is None:
-            delimiters = ['.', '?', '!',
-                        ';', ':', '\n',
-                        '\r\n', '\r',
-                        '\t',
-                        '。', '？', '！',
-                        '…']
+            delimiters = ['.', '?', '!', ';', ':', '\n', '\r\n', '\r', '\t', '。', '？', '！', '…']
         pattern = '|'.join(map(re.escape, delimiters))
         split_result = re.split(pattern, text)
-        cleaned_sentences = [sentence.strip() for sentence in split_result]
-        cleaned_sentences = [s for s in cleaned_sentences if s]
+        cleaned_sentences = [sentence.strip() for sentence in split_result if sentence.strip()]
         return cleaned_sentences
 
     def generate_stream(
@@ -359,63 +336,3 @@ class InterfaceHF:
         self.audio_queue.put(None)
         audio_thread.join()
         del self.audio_queue
-
-class InterfaceGGUF(InterfaceHF):
-    def __init__(
-        self,
-        config: GGUFModelConfig
-    ) -> None:
-        self.device = torch.device(
-            config.device if config.device is not None
-            else "cuda" if torch.cuda.is_available()
-            else "cpu"
-        )
-        self.config = config
-        self._device = config.device
-        self.languages = config.languages
-        self.language = config.language
-        self.verbose = config.verbose
-
-        self.audio_codec = AudioCodec(self.device, config.wavtokenizer_model_path)
-        self.prompt_processor = PromptProcessor(config.tokenizer_path, self.languages)
-        self.model = GGUFModel(
-            model_path=config.model_path,
-            n_gpu_layers=config.n_gpu_layers,
-            max_seq_length=config.max_seq_length,
-            additional_model_config=config.additional_model_config
-        )
-
-    def prepare_prompt(self, text: str, speaker: dict = None):
-        prompt = self.prompt_processor.get_completion_prompt(text, self.language, speaker)
-        return self.prompt_processor.tokenizer.encode(prompt, add_special_tokens=False)
-
-    def generate(
-            self,
-            text: str,
-            speaker: dict = None,
-            temperature: float = 0.1,
-            repetition_penalty: float = 1.1,
-            max_length = 4096,
-            additional_gen_config = {},
-        ) -> ModelOutput:
-        input_ids = self.prepare_prompt(text, speaker)
-        if self.verbose:
-            logger.info(f"Input tokens: {len(input_ids)}")
-            logger.info("Generating audio...")
-
-        self.check_generation_max_length(max_length)
-
-        output = self.model.generate(
-            input_ids=input_ids,
-            config=GenerationConfig(
-                temperature=temperature,
-                max_length=max_length,
-                repetition_penalty=repetition_penalty,
-                additional_gen_config=additional_gen_config,
-            )
-        )
-        audio = self.get_audio(output)
-        if self.verbose:
-            logger.info("Audio generation completed")
-
-        return ModelOutput(audio, self.audio_codec.sr)
