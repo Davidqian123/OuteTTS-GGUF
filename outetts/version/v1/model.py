@@ -32,6 +32,7 @@ class GGUFModel:
         self.model = Llama(
             model_path=model_path,
             n_gpu_layers=n_gpu_layers,
+            verbose=False,
             **additional_model_config
         )
 

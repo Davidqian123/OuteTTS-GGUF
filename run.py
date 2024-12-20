@@ -1,5 +1,6 @@
 import outetts
 import time
+
 model_config = outetts.GGUFModelConfig_v1(
     model_path="OuteTTS-0.2-500M-FP16.gguf",
     language="en", # Supported languages in v0.2: en, zh, ja, ko
@@ -12,7 +13,7 @@ interface = outetts.InterfaceGGUF(model_version="0.2", cfg=model_config)
 # interface.print_default_speakers()
 
 # # Load a default speaker
-# speaker = interface.load_default_speaker(name="male_1")
+speaker = interface.load_default_speaker(name="male_1")
 
 time_start = time.time()
 # Generate speech

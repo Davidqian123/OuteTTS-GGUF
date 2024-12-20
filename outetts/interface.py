@@ -7,7 +7,6 @@ MODEL_CONFIGS = {
         "sizes": ["350M"],
         "links": ["https://huggingface.co/OuteAI/OuteTTS-0.1-350M", "https://huggingface.co/OuteAI/OuteTTS-0.1-350M-GGUF"],
         "languages": ["en"],
-        "gguf_interface": _InterfaceGGUF_v1,
         "max_seq_length": 4096
     },
     "0.2": {
@@ -15,7 +14,6 @@ MODEL_CONFIGS = {
         "sizes": ["500M"],
         "links": ["https://huggingface.co/OuteAI/OuteTTS-0.2-500M", "https://huggingface.co/OuteAI/OuteTTS-0.2-500M-GGUF"],
         "languages": ["en", "ja", "ko", "zh"],
-        "gguf_interface": _InterfaceGGUF_v1,
         "max_seq_length": 4096
     },
 }
@@ -64,6 +62,4 @@ def InterfaceGGUF(
     cfg.languages = languages
 
     check_max_length(cfg.max_seq_length, config["max_seq_length"])
-
-    interface_class = config["gguf_interface"]
-    return interface_class(cfg)
+    return _InterfaceGGUF_v1(cfg)
